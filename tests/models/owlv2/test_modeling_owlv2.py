@@ -145,7 +145,7 @@ class Owlv2VisionModelTest(ModelTesterMixin, unittest.TestCase):
 
     all_model_classes = (Owlv2VisionModel,) if is_torch_available() else ()
     fx_compatible = False
-    test_pruning = False
+
     test_resize_embeddings = False
 
     def setUp(self):
@@ -308,7 +308,6 @@ class Owlv2TextModelTester:
 class Owlv2TextModelTest(ModelTesterMixin, unittest.TestCase):
     all_model_classes = (Owlv2TextModel,) if is_torch_available() else ()
     fx_compatible = False
-    test_pruning = False
 
     def setUp(self):
         self.model_tester = Owlv2TextModelTester(self)
@@ -426,7 +425,7 @@ class Owlv2ModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
         else {}
     )
     fx_compatible = False
-    test_pruning = False
+
     test_resize_embeddings = False
     test_attention_outputs = False
     # For multi-modal models like OwlV2, we need to include all required inputs for SDPA tests
@@ -620,7 +619,7 @@ class Owlv2ForObjectDetectionTester:
 class Owlv2ForObjectDetectionTest(ModelTesterMixin, unittest.TestCase):
     all_model_classes = (Owlv2ForObjectDetection,) if is_torch_available() else ()
     fx_compatible = False
-    test_pruning = False
+
     test_resize_embeddings = False
     test_attention_outputs = False
     # For multi-modal models like OwlV2, we need to include all required inputs for SDPA tests
