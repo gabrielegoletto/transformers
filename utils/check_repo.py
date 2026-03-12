@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2020 The HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +21,7 @@ Utility that performs several consistency checks on the repo. This includes:
 - checking all the auto mapping are properly defined (no typos, importable)
 - checking the list of deprecated models is up to date
 
-Use from the root of the repo with (as used in `make repo-consistency`):
+Use from the root of the repo with (as used in `make check-repo`):
 
 ```bash
 python utils/check_repo.py
@@ -31,6 +30,7 @@ python utils/check_repo.py
 It has no auto-fix mode.
 """
 
+import ast
 import os
 import re
 import types
@@ -46,7 +46,7 @@ from transformers.models.auto.feature_extraction_auto import FEATURE_EXTRACTOR_M
 from transformers.models.auto.image_processing_auto import IMAGE_PROCESSOR_MAPPING_NAMES
 from transformers.models.auto.processing_auto import PROCESSOR_MAPPING_NAMES
 from transformers.models.auto.tokenization_auto import TOKENIZER_MAPPING_NAMES
-from transformers.testing_utils import _COMMON_MODEL_NAMES_MAP
+from transformers.testing_utils import _COMMON_MODEL_NAMES_MAP, _VLM_COMMON_MODEL_NAMES_MAP
 from transformers.utils import ENV_VARS_TRUE_VALUES, direct_transformers_import
 
 
@@ -72,7 +72,11 @@ PRIVATE_MODELS = [
     "Qwen2_5_VisionTransformerPretrainedModel",
     "Qwen3VLVisionModel",
     "Qwen3VLMoeVisionModel",
+    "Qwen3_5VisionModel",
+    "Qwen3_5MoeVisionModel",
     "SwitchTransformersStack",
+    "SiglipTextTransformer",
+    "Siglip2TextTransformer",
     "MaskFormerSwinModel",
     "MaskFormerSwinPreTrainedModel",
     "BridgeTowerTextModel",
@@ -98,11 +102,34 @@ PRIVATE_MODELS = [
     "Phi4MultimodalVisionModel",
     "Glm4vVisionModel",
     "Glm4vMoeVisionModel",
+    "GlmImageVisionModel",
+    "GlmOcrVisionModel",
     "EvollaSaProtPreTrainedModel",
     "BltLocalEncoder",  # Building part of bigger (tested) model. Tested implicitly through BLTForCausalLM.
     "BltLocalDecoder",  # Building part of bigger (tested) model. Tested implicitly through BLTForCausalLM.
     "BltGlobalTransformer",  # Building part of bigger (tested) model. Tested implicitly through BLTForCausalLM.
     "Ovis2VisionModel",
+    "PeAudioPreTrainedModel",
+    "PeAudioVideoPreTrainedModel",
+    "PeVideoPreTrainedModel",
+    # the following models should have been PreTrainedModels
+    "Owlv2TextTransformer",
+    "Owlv2VisionTransformer",
+    "OwlViTTextTransformer",
+    "OwlViTVisionTransformer",
+    "XCLIPTextTransformer",
+    "CLIPSegTextTransformer",
+    "DetrDecoder",
+    "GroupViTTextTransformer",
+    "CLIPTextTransformer",
+    "CLIPVisionTransformer",
+    "MetaClip2TextTransformer",
+    "MetaClip2VisionTransformer",
+    "MLCDVisionTransformer",
+    # end of should have beens
+    "VoxtralRealtimeTextModel",
+    "VoxtralRealtimeTextForCausalLM",
+    "VoxtralRealtimeTextPreTrainedModel",
 ]
 
 # Update this list for models that are not tested with a comment explaining the reason it should not be.
@@ -120,6 +147,7 @@ IGNORE_NON_TESTED = (
         "ErnieMForInformationExtraction",
         "FastSpeech2ConformerHifiGan",  # Already tested by SpeechT5HifiGan (# Copied from)
         "FastSpeech2ConformerWithHifiGan",  # Built with two smaller (tested) models.
+        "GlmImageVQVAE",  # Building part of bigger (tested) model.
         "GraphormerDecoderHead",  # Building part of bigger (tested) model.
         "JukeboxVQVAE",  # Building part of bigger (tested) model.
         "JukeboxPrior",  # Building part of bigger (tested) model.
@@ -152,12 +180,21 @@ IGNORE_NON_TESTED = (
         "SeamlessM4TCodeHifiGan",  # Building part of bigger (tested) model.
         "SeamlessM4TTextToUnitForConditionalGeneration",  # Building part of bigger (tested) model.
         "ChameleonVQVAE",  # VQVAE here is used only for encoding (discretizing) and is tested as part of bigger model
+        "PPDocLayoutV2ReadingOrder",  # Building part of bigger (tested) model. Tested implicitly through PPDocLayoutV2ForObjectDetection.
+        "PPDocLayoutV2Model",  # Building part of bigger (tested) model. Tested implicitly through PPDocLayoutV2ForObjectDetection.
+        "PPDocLayoutV3Model",  # Building part of bigger (tested) model. Tested implicitly through PPDocLayoutV3ForObjectDetection.
+        "PaddleOCRVLModel",  # Building part of bigger (tested) model. Tested implicitly through PaddleOCRVLForConditionalGeneration.
+        "PaddleOCRVisionModel",  # Building part of bigger (tested) model. Tested implicitly through PaddleOCRVLForConditionalGeneration.
+        "PaddleOCRVisionTransformer",  # Building part of bigger (tested) model. Tested implicitly through PaddleOCRVLForConditionalGeneration.
+        "PaddleOCRTextModel",  # Building part of bigger (tested) model. Tested implicitly through PaddleOCRVLForConditionalGeneration.
         "Qwen2VLModel",  # Building part of bigger (tested) model. Tested implicitly through Qwen2VLForConditionalGeneration.
         "Qwen2_5_VLModel",  # Building part of bigger (tested) model. Tested implicitly through Qwen2_5_VLForConditionalGeneration.
         "Qwen3VLModel",  # Building part of bigger (tested) model. Tested implicitly through Qwen3VLForConditionalGeneration.
         "Qwen3VLMoeModel",  # Building part of bigger (tested) model. Tested implicitly through Qwen3VLMoeForConditionalGeneration.
         "Qwen3VLTextModel",  # Building part of bigger (tested) model.
         "Qwen3VLMoeTextModel",  # Building part of bigger (tested) model.
+        "Qwen3_5TextModel",  # Building part of bigger (tested) model. Tested implicitly through Qwen3_5ForConditionalGeneration.
+        "Qwen3_5MoeTextModel",  # Building part of bigger (tested) model. Tested implicitly through Qwen3_5MoeForConditionalGeneration.
         "Qwen2_5OmniForConditionalGeneration",  # Not a regular model. Testted in Qwen2_5OmniModelIntergrationTest
         "Qwen2_5OmniTalkerForConditionalGeneration",  #  Building part of bigger (tested) model. Tested implicitly through Qwen2_5OmniModelIntergrationTest.
         "Qwen2_5OmniTalkerModel",  # Building part of bigger (tested) model. Tested implicitly through Qwen2_5OmniModelIntergrationTest.
@@ -183,11 +220,15 @@ IGNORE_NON_TESTED = (
         "Emu3TextModel",  # Building part of bigger (tested) model
         "Glm4vTextModel",  # Building part of bigger (tested) model
         "Glm4vMoeTextModel",  # Building part of bigger (tested) model
+        "GlmImageTextModel",  # Building part of bigger (tested) model
+        "GlmOcrTextModel",  # Building part of bigger (tested) model
         "Qwen2VLTextModel",  # Building part of bigger (tested) model
         "Qwen2_5_VLTextModel",  # Building part of bigger (tested) model
         "InternVLVisionModel",  # Building part of bigger (tested) model
         "JanusVisionModel",  # Building part of bigger (tested) model
+        "PPDocLayoutV3Model",  # Building part of bigger (tested) model
         "TimesFmModel",  # Building part of bigger (tested) model
+        "TimesFm2_5Model",  # Building part of bigger (tested) model
         "CsmDepthDecoderForCausalLM",  # Building part of bigger (tested) model. Tested implicitly through CsmForConditionalGenerationIntegrationTest.
         "CsmDepthDecoderModel",  # Building part of bigger (tested) model. Tested implicitly through CsmForConditionalGenerationIntegrationTest.
         "CsmBackboneModel",  # Building part of bigger (tested) model. Tested implicitly through CsmForConditionalGenerationIntegrationTest.
@@ -196,6 +237,15 @@ IGNORE_NON_TESTED = (
         "BltLocalDecoder",  # Building part of bigger (tested) model. Tested implicitly through BLTForCausalLM.
         "BltGlobalTransformer",  # Building part of bigger (tested) model. Tested implicitly through BLTForCausalLM.
         "Florence2VisionBackbone",  # Building part of bigger (tested) model. Tested implicitly through Florence2ForConditionalGeneration.
+        "HiggsAudioV2Model",  # Building part of bigger (tested) model. Tested implicitly through HiggsAudioV2ForConditionalGenerationIntegrationTest.
+        "Ernie4_5_VLMoeTextModel",  # Building part of bigger (tested) model
+        "Ernie4_5_VL_MoeForConditionalGeneration",  # BC alias
+        "Ernie4_5_VL_MoeModel",  # BC alias
+        "Ernie4_5_VL_MoeTextModel",  # BC alias
+        "PeAudioFrameLevelModel",
+        "PeAudioVideoModel",
+        "VibeVoiceAcousticTokenizerEncoderModel",  # Tested through VibeVoiceAcousticTokenizerModel
+        "VibeVoiceAcousticTokenizerDecoderModel",  # Tested through VibeVoiceAcousticTokenizerModel
     ]
 )
 
@@ -298,6 +348,7 @@ IGNORE_NON_AUTO_CONFIGURED = PRIVATE_MODELS.copy() + [
     "FlavaTextModel",
     "FlavaImageModel",
     "FlavaMultimodalModel",
+    "GlmImageForConditionalGeneration",
     "GPT2DoubleHeadsModel",
     "GPTSw3DoubleHeadsModel",
     "InstructBlipVisionModel",
@@ -318,6 +369,7 @@ IGNORE_NON_AUTO_CONFIGURED = PRIVATE_MODELS.copy() + [
     "OwlViTForObjectDetection",
     "PatchTSMixerForPrediction",
     "PatchTSMixerForPretraining",
+    "PPDocLayoutV2ReadingOrder",
     "RagModel",
     "RagSequenceForGeneration",
     "RagTokenForGeneration",
@@ -381,6 +433,11 @@ IGNORE_NON_AUTO_CONFIGURED = PRIVATE_MODELS.copy() + [
     "Emu3TextModel",  # Building part of bigger (tested) model
     "JanusVQVAE",  # no autoclass for VQ-VAE models
     "JanusVisionModel",  # Building part of bigger (tested) model
+    "PPDocLayoutV2Model",  # Building part of bigger (tested) model
+    "PaddleOCRVLModel",  # Building part of bigger (tested) model
+    "PaddleOCRVisionModel",  # Building part of bigger (tested) model
+    "PaddleOCRVisionTransformer",  # Building part of bigger (tested) model
+    "PaddleOCRTextModel",  # Building part of bigger (tested) model
     "Qwen2_5OmniTalkerForConditionalGeneration",  # Building part of a bigger model
     "Qwen2_5OmniTalkerModel",  # Building part of a bigger model
     "Qwen2_5OmniThinkerForConditionalGeneration",  # Building part of a bigger model
@@ -394,6 +451,7 @@ IGNORE_NON_AUTO_CONFIGURED = PRIVATE_MODELS.copy() + [
     "CsmForConditionalGeneration",  # Building part of a bigger model
     "BltPatcher",  # Building part of a bigger model, tested implicitly through BltForCausalLM
     "Florence2VisionBackbone",  # Building part of a bigger model
+    "HiggsAudioV2Model",  # Building part of a bigger model
     "Qwen3OmniMoeCode2Wav",  # Building part of a bigger model
     "Qwen3OmniMoeCode2WavTransformerModel",  # Building part of a bigger model
     "Qwen3OmniMoeTalkerCodePredictorModel",  # Building part of a bigger model
@@ -402,6 +460,11 @@ IGNORE_NON_AUTO_CONFIGURED = PRIVATE_MODELS.copy() + [
     "Qwen3OmniMoeTalkerModel",  # Building part of a bigger model
     "Qwen3OmniMoeThinkerForConditionalGeneration",  # Building part of a bigger model
     "Qwen3OmniMoeThinkerTextModel",  # Building part of a bigger model
+    "Ernie4_5_VLMoeTextModel",  # Building part of a bigger model
+    "PeAudioFrameLevelModel",
+    "Ernie4_5_VL_MoeForConditionalGeneration",  # BC Alias
+    "Ernie4_5_VL_MoeModel",  # BC Alias
+    "Ernie4_5_VL_MoeTextModel",  # BC Alias
 ]
 
 
@@ -619,6 +682,9 @@ def find_tested_models(test_file: str) -> set[str]:
     Returns:
         `Set[str]`: The set of models tested in that file.
     """
+    # TODO Matt: Some of the regexes here are ugly / hacky, and we can probably parse the content better.
+    #            Also we should be clear about exactly what rules we're enforcing and which classes
+    #            are actually mandatory.
     with open(os.path.join(PATH_TO_TESTS, test_file), "r", encoding="utf-8", newline="\n") as f:
         content = f.read()
 
@@ -654,6 +720,29 @@ def find_tested_models(test_file: str) -> set[str]:
                 tested_class = tested_class[0].split("=")[1].strip()
             else:
                 tested_class = model_name + _COMMON_MODEL_NAMES_MAP[test_class_type]
+            model_tested.add(tested_class)
+    # Same as above, but for VLMModelTester. We scope the search to the VLMModelTester subclass body, as some
+    # files may contain both a CausalLMModelTester and a VLMModelTester (e.g. gemma3).
+    vlm_class_match = re.search(r"class \w+\(VLMModelTester\)", content)
+    if vlm_class_match is not None:
+        vlm_content = content[vlm_class_match.start() :]
+        base_model_class = re.findall(r"base_model_class\s+=.*", vlm_content)  # Required attribute
+        base_class = base_model_class[0].split("=")[1].strip()
+        model_tested.add(base_class)
+
+        model_name = base_class.replace("Model", "")
+        # Optional attributes: if not set explicitly, the tester will attempt to infer and use the corresponding class
+        for test_class_type in [
+            "conditional_generation_class",
+            "sequence_classification_class",
+        ]:
+            tested_class = re.findall(rf"{test_class_type}\s+=.*", vlm_content)
+            if tested_class:
+                tested_class = tested_class[0].split("=")[1].strip()
+            elif test_class_type in _VLM_COMMON_MODEL_NAMES_MAP:
+                tested_class = model_name + _VLM_COMMON_MODEL_NAMES_MAP[test_class_type]
+            else:
+                continue
             model_tested.add(tested_class)
 
     return model_tested
@@ -951,7 +1040,6 @@ def find_all_documented_objects() -> list[str]:
 # One good reason for not being documented is to be deprecated. Put in this list deprecated objects.
 DEPRECATED_OBJECTS = [
     "PretrainedConfig",  # deprecated in favor of PreTrainedConfig
-    "AutoModelWithLMHead",
     "BartPretrainedModel",
     "DataCollator",
     "DataCollatorForSOP",
@@ -968,8 +1056,6 @@ DEPRECATED_OBJECTS = [
     "SquadFeatures",
     "SquadV1Processor",
     "SquadV2Processor",
-    "Wav2Vec2ForMaskedLM",
-    "Wav2Vec2Tokenizer",
     "glue_compute_metrics",
     "glue_convert_examples_to_features",
     "glue_output_modes",
@@ -992,7 +1078,6 @@ UNDOCUMENTED_OBJECTS = [
     "DPRPretrainedReader",  # Like an Encoder.
     "DummyObject",  # Just picked by mistake sometimes.
     "MecabTokenizer",  # Internal, should never have been in the main init.
-    "ModelCard",  # Internal type.
     "SqueezeBertModule",  # Internal building block (should have been called SqueezeBertLayer)
     "TransfoXLCorpus",  # Internal type.
     "WordpieceTokenizer",  # Internal, should never have been in the main init.
@@ -1006,6 +1091,16 @@ UNDOCUMENTED_OBJECTS = [
     "VitPoseBackbone",  # Internal module
     "VitPoseBackboneConfig",  # Internal module
     "get_values",  # Internal object
+    "Ernie4_5_VL_MoeConfig",  # BC Alias
+    "Ernie4_5_VL_MoeForConditionalGeneration",  # BC Alias
+    "Ernie4_5_VL_MoeImageProcessor",  # BC Alias
+    "Ernie4_5_VL_MoeImageProcessorFast",  # BC Alias
+    "Ernie4_5_VL_MoeModel",  # BC Alias
+    "Ernie4_5_VL_MoeTextConfig",  # BC Alias
+    "Ernie4_5_VL_MoeTextModel",  # BC Alias
+    "Ernie4_5_VL_MoeVariableResolutionResamplerModel",  # BC Alias
+    "Ernie4_5_VL_MoeVisionConfig",  # BC Alias
+    "Ernie4_5_VL_MoeVisionTransformerPretrainedModel",  # BC Alias
 ]
 
 # This list should be empty. Objects in it should get their own doc page.
@@ -1032,6 +1127,7 @@ SHOULD_HAVE_THEIR_OWN_PAGE = [
     "TimmBackbone",
     "TimmBackboneConfig",
     "VitDetBackbone",
+    "RoFormerTokenizerFast",  # An alias
 ]
 
 
@@ -1199,6 +1295,68 @@ def check_deprecated_constant_is_up_to_date():
         raise Exception("\n".join(message))
 
 
+def check_models_have_kwargs():
+    """
+    Checks that all model classes defined in modeling files accept **kwargs in their forward pass.
+    Since we ast.parse() here, it might be a good idea to add other tests that inspect modeling code here rather than
+    repeatedly ast.parsing() in each test!
+    """
+    models_dir = Path(PATH_TO_TRANSFORMERS) / "models"
+    failing_classes = []
+    for model_dir in models_dir.iterdir():
+        if model_dir.name == "deprecated":
+            continue
+        if model_dir.is_dir() and (modeling_file := list(model_dir.glob("modeling_*.py"))):
+            modeling_file = modeling_file[0]
+
+            with open(modeling_file, "r", encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+
+            # Map all classes in the file to their base classes
+            class_bases = {}
+            all_class_nodes = {}
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    # We only care about base classes that are simple names
+                    bases = [b.id for b in node.bases if isinstance(b, ast.Name)]
+                    class_bases[node.name] = bases
+                    all_class_nodes[node.name] = node
+
+            inherits_from_pretrained = {"PreTrainedModel"}
+            # Loop over classes and mark the ones that inherit from PreTrainedModel, or from
+            # previously marked classes (which indicates indirect inheritance from PreTrainedModel)
+            # Keep going until you go through the whole list without discovering a new child class, then break
+            while True:
+                for class_name, bases in class_bases.items():
+                    if class_name in inherits_from_pretrained:
+                        continue
+                    if inherits_from_pretrained.intersection(bases):
+                        inherits_from_pretrained.add(class_name)
+                        break
+                else:
+                    break
+
+            # 2. Iterate through classes and check conditions
+            for class_name, class_def in all_class_nodes.items():
+                if class_name not in inherits_from_pretrained:
+                    continue
+
+                forward_method = next(
+                    (n for n in class_def.body if isinstance(n, ast.FunctionDef) and n.name == "forward"), None
+                )
+                if forward_method:
+                    # 3. Check for **kwargs (represented as .kwarg in AST)
+                    if forward_method.args.kwarg is None:
+                        failing_classes.append(class_name)
+
+    if failing_classes:
+        raise Exception(
+            "The following model classes do not accept **kwargs in their forward() method: \n"
+            f"{', '.join(failing_classes)}."
+        )
+
+
 def check_repo_quality():
     """Check all models are tested and documented."""
     print("Repository-wide checks:")
@@ -1221,6 +1379,8 @@ def check_repo_quality():
     check_all_auto_mappings_importable()
     print("    - checking the DEPRECATED_MODELS constant is up to date.")
     check_deprecated_constant_is_up_to_date()
+    print("    - checking all models accept **kwargs in their call.")
+    check_models_have_kwargs()
 
 
 if __name__ == "__main__":

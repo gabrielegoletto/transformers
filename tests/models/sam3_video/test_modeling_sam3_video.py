@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +18,8 @@ import unittest
 
 from transformers.testing_utils import (
     backend_empty_cache,
+    is_torch_bf16_available_on_device,
+    is_torch_fp16_available_on_device,
     slow,
     torch_device,
 )
@@ -42,7 +43,7 @@ def prepare_video():
 class Sam3VideoModelIntegrationTest(unittest.TestCase):
     def setUp(self):
         super().setUp()
-        checkpoint_path = "../sam3-hf-v4-video-full"
+        checkpoint_path = "facebook/sam3"
         self.video_model = Sam3VideoModel.from_pretrained(checkpoint_path).to(torch.float32)
         self.processor = Sam3VideoProcessor.from_pretrained(checkpoint_path)
         self.video_model.to(torch_device)
@@ -473,3 +474,135 @@ class Sam3VideoModelIntegrationTest(unittest.TestCase):
                     atol=5e-3,  # Higher tolerance for raw logits
                     rtol=5e-3,
                 )
+
+    def test_inference_video_multi_prompt(self):
+        """Test multi-prompt tracking - detecting multiple object categories in one pass."""
+        raw_video = prepare_video()
+        inference_session = self.processor.init_video_session(
+            video=raw_video,
+            inference_device=torch_device,
+            processing_device="cpu",
+            video_storage_device="cpu",
+        )
+
+        # Add multiple text prompts
+        prompts = ["person", "bed"]
+        self.processor.add_text_prompt(
+            inference_session=inference_session,
+            text=prompts,
+        )
+
+        # Propagate through video frames
+        outputs_per_frame = {}
+        for model_outputs in self.video_model.propagate_in_video_iterator(
+            inference_session=inference_session,
+            max_frame_num_to_track=3,
+        ):
+            processed_outputs = self.processor.postprocess_outputs(inference_session, model_outputs)
+            outputs_per_frame[model_outputs.frame_idx] = processed_outputs
+
+        # Check we processed the expected number of frames
+        self.assertGreaterEqual(len(outputs_per_frame), 1)
+        self.assertLessEqual(len(outputs_per_frame), 4)
+
+        # Check output structure for each frame
+        for processed_outputs in outputs_per_frame.values():
+            self.assertIn("object_ids", processed_outputs)
+            self.assertIn("scores", processed_outputs)
+            self.assertIn("boxes", processed_outputs)
+            self.assertIn("masks", processed_outputs)
+            self.assertIn("prompt_to_obj_ids", processed_outputs)  # Multi-prompt specific
+
+            # Check prompt_to_obj_ids structure
+            prompt_to_obj_ids = processed_outputs["prompt_to_obj_ids"]
+            self.assertIsInstance(prompt_to_obj_ids, dict)
+            for prompt, obj_ids in prompt_to_obj_ids.items():
+                self.assertIsInstance(prompt, str)
+                self.assertIsInstance(obj_ids, list)
+                # Each object ID should be in the main object_ids list
+                for obj_id in obj_ids:
+                    self.assertIn(obj_id, processed_outputs["object_ids"].tolist())
+
+        # Check that we detected objects from multiple prompts
+        first_frame_outputs = outputs_per_frame[min(outputs_per_frame.keys())]
+        prompt_to_obj_ids = first_frame_outputs["prompt_to_obj_ids"]
+
+        # Should have at least one prompt with detections
+        self.assertGreater(len(prompt_to_obj_ids), 0)
+
+        # All prompts in prompt_to_obj_ids should be from our original prompts
+        for prompt in prompt_to_obj_ids.keys():
+            self.assertIn(prompt, prompts)
+
+    def test_custom_image_size(self):
+        """Test that custom image size can be set and propagates correctly to detector and tracker configs."""
+        from transformers import Sam3VideoConfig
+
+        config = Sam3VideoConfig.from_pretrained("facebook/sam3")
+        config.image_size = 560
+
+        self.assertEqual(config.image_size, 560)
+        self.assertEqual(config.detector_config.image_size, 560)
+        self.assertEqual(config.tracker_config.image_size, 560)
+        self.assertEqual(config.detector_config.vision_config.image_size, 560)
+        self.assertEqual(config.detector_config.vision_config.backbone_config.image_size, 560)
+
+        model = Sam3VideoModel.from_pretrained("facebook/sam3", config=config).to(torch_device).eval()
+        self.assertEqual(model.config.image_size, 560)
+
+    def test_inference_with_different_dtypes(self):
+        """Test that inference works correctly for float32, bfloat16, and float16 dtypes."""
+        raw_video = prepare_video()
+        dtypes_to_test = [
+            (torch.float32, None),  # float32 is always available
+            (torch.bfloat16, is_torch_bf16_available_on_device),
+            (torch.float16, is_torch_fp16_available_on_device),
+        ]
+
+        for dtype, availability_check in dtypes_to_test:
+            with self.subTest(dtype=dtype):
+                # Skip if dtype is not available on device
+                if availability_check is not None and not availability_check(torch_device):
+                    self.skipTest(f"{dtype} not supported on {torch_device}")
+
+                # Load model with specific dtype
+                video_model = Sam3VideoModel.from_pretrained("facebook/sam3", torch_dtype=dtype).to(torch_device)
+                video_model.eval()
+
+                # Initialize inference session
+                inference_session = self.processor.init_video_session(
+                    video=raw_video,
+                    inference_device=torch_device,
+                    processing_device="cpu",
+                    video_storage_device="cpu",
+                    dtype=dtype,
+                )
+
+                # Add text prompt
+                text = "person"
+                inference_session = self.processor.add_text_prompt(
+                    inference_session=inference_session,
+                    text=text,
+                )
+
+                # Run inference on first frame
+                outputs_per_frame = {}
+                model_outputs_per_frame = {}
+                max_frame_num_to_track = 2
+                for model_outputs in video_model.propagate_in_video_iterator(
+                    inference_session=inference_session,
+                    max_frame_num_to_track=max_frame_num_to_track,
+                ):
+                    processed_outputs = self.processor.postprocess_outputs(inference_session, model_outputs)
+                    outputs_per_frame[model_outputs.frame_idx] = processed_outputs
+                    model_outputs_per_frame[model_outputs.frame_idx] = model_outputs
+
+                    # Verify dtype is maintained in model outputs
+                    if len(model_outputs.object_ids) > 0:
+                        first_obj_id = model_outputs.object_ids[0]
+                        raw_mask = model_outputs.obj_id_to_mask[first_obj_id]
+                        self.assertEqual(raw_mask.dtype, dtype)
+
+                # Verify we processed frames
+                self.assertGreaterEqual(len(outputs_per_frame), 1)
+                self.assertLessEqual(len(outputs_per_frame), max_frame_num_to_track + 1)
